@@ -21,101 +21,90 @@ def get_q_table_reward(table, state_string):
 
 if __name__ == "__main__":
     rubik_cube = Rcube()
+    q_table_filename = 'q_table.pkl'
 
-    if os.path.exists('q_table.pkl'):  # check for the pickle file
-        q_table = pd.read_pickle('q_table.pkl')
+    complimentary_move = {'rpu': ['rpd', 'lpu'],
+                          'rpd': ['rpu', 'lpd'],
+                          'lpu': ['lpd', 'rpu'],
+                          'lpd': ['lpu', 'rpd'],
+                          'uyr': ['uyl', 'dyr'],
+                          'uyl': ['uyr', 'dyl'],
+                          'dyr': ['dyl', 'uyr'],
+                          'dyl': ['dyr', 'uyl'],
+                          'frr': ['frl', 'brr'],
+                          'frl': ['frr', 'brl'],
+                          'brr': ['brl', 'frr'],
+                          'brl': ['brr', 'frl']}
+
+    if os.path.exists(q_table_filename):  # check for the pickle file
+        q_table = pd.read_pickle(q_table_filename)
         print('Q-table loaded')
     else:
         q_table = pd.DataFrame(columns=['state'] + rubik_cube.moves)
 
     alpha = 0.5
-    discount_factor = 0.8
+    discount_factor = 0.8 
     state_mode = 'pattern'
 
     max_era = 1000
-
-    result_era = {'table': [], 'random': [], 'balanced': []}
-    result_episode = {'table': [], 'random': [], 'balanced': []}
     for era in range(1, max_era):
-        max_episodes = 27
-        for mode in ['table', 'random', 'balanced']:
-            result_episode[mode] = []
-        for episode in range(1, max_episodes):
-            episode_number = (era-1)*max_episodes + episode
-            rubik_cube.factory_reset()
-            rubik_cube.change_perspective_random()
-            if episode % 3 == 0:
-                weights = [1, 0]
-                mode = 'table'
-            elif episode % 3 == 1:
-                weights = [0, 1]
-                mode = 'random'
-            else:
-                weights = [1, 1]
-                mode = 'balanced'
+        rubik_cube.factory_reset()
+        rubik_cube.change_perspective_random()
 
-            # ---------------------- SCRAMBLE CUBE ------------------------------------
-            n_scramble = 2 + int(math.log(era, 4))
-            while rubik_cube.faces_solved() == 6:
-                rubik_cube.scramble_up(n_scramble)
-            q_table, _ = get_q_table_reward(q_table, rubik_cube.state_string(state_mode))  # to add initial state to the table
-            # ---------------------- TRY TO SOLVE THE CUBE ------------------------------------
-            steps = 0
-            max_steps = n_scramble + 2 #2**n_scramble
-            while rubik_cube.faces_solved() < 6 and steps < max_steps:
-                # ------------------ DECIDE THE MOVE -----------------------------------------------------------
-                present_state = rubik_cube.state_string(state_mode)
-                if not q_table[q_table['state'] == present_state].empty:
-                    a = q_table.loc[q_table['state'] == present_state, :].values[0].tolist()[1:]
-                    if sum(a) == 0:
-                        present_move_table = random.choice(rubik_cube.moves)
-                    else:
-                        # print("selected from Q-table:", a)
-                        present_move_table = rubik_cube.moves[a.index(max(a))]
-                else:
-                    present_move_table = random.choice(rubik_cube.moves)
+        max_steps = 100
+        step = 0
+        prev_move = 'rpu'
+        while step < max_steps:
+            present_state = rubik_cube.state_string(return_mode=state_mode)
+            jackpot_reward = rubik_cube.get_reward()
+            q_table, q_table_mean_reward = get_q_table_reward(q_table, present_state)
 
+            present_move_random = random.choice(rubik_cube.moves)
+            while present_move_random in complimentary_move[prev_move]:
                 present_move_random = random.choice(rubik_cube.moves)
-                present_move = random.choices([present_move_table, present_move_random], weights=weights)[0]
-                # ------------------ ORIENT CUBE -------------------------------------------------------------
-                rubik_cube.orient(present_move)
+            rubik_cube.orient(present_move_random)
 
-                # ------------------ CALCULATE REWARD --------------------------------------------------------
-                next_state = rubik_cube.state_string(return_mode=state_mode)
-                # rubik_cube.paint_cube(1)
+            next_state = rubik_cube.state_string(return_mode=state_mode)
+            q_table, _ = get_q_table_reward(q_table, next_state)
 
-                jackpot_reward = rubik_cube.get_reward()
+            # ------------------ Q TABLE UPDATE -------------------------------------------------------------
+            complement_present_move = random.choice(complimentary_move[present_move_random])
+            q_value = (1 - alpha) * q_table[q_table['state'] == next_state][complement_present_move].values[0] \
+                    + alpha * (jackpot_reward + discount_factor * q_table_mean_reward)
+            q_table.loc[q_table['state'] == next_state, complement_present_move] = q_value
 
-                q_table, q_table_reward_max = get_q_table_reward(q_table, rubik_cube.state_string(state_mode))
-                try_table = 0
-                while try_table < 24:
-                    rubik_cube.change_perspective_random(1)
-                    q_table, q_table_reward = get_q_table_reward(q_table, rubik_cube.state_string(state_mode))
-                    if q_table_reward > q_table_reward_max:
-                        q_table_reward_max = q_table_reward
-                        try_table += 2
-                    try_table += 1
+            prev_move = present_move_random
+            step += 1
 
-                # ------------------ Q TABLE UPDATE -------------------------------------------------------------
-                q_value = (1 - alpha) * q_table[q_table['state'] == present_state][present_move].values[0] + \
-                           alpha * (jackpot_reward + discount_factor * q_table_reward_max)
-                q_table.loc[q_table['state'] == present_state, present_move] = q_value
 
-                steps += 1
+        # ------------------ TRY SOLVING -------------------------------------------------------------
+        # count = 0
+        # while not (rubik_cube.faces_solved() == 6 or count > max_steps):
+        #     try_table = 0
+        #     while try_table < 24:
+        #         if try_table:
+        #             rubik_cube.change_perspective_random(1)
+        #         present_state = rubik_cube.state_string(state_mode)
+        #         if not q_table[q_table['state'] == present_state].empty:
+        #             a = q_table.loc[q_table['state'] == present_state, :].values[0].tolist()[1:]
+        #             if sum(a) == 0:
+        #                 present_move_table = random.choice(rubik_cube.moves)
+        #                 try_table += 1
+        #             else:
+        #                 present_move_table = rubik_cube.moves[a.index(max(a))]
+        #                 try_table += 100
+        #         else:
+        #             present_move_table = random.choice(rubik_cube.moves)
+        #             try_table += 1
+        #             print('==================')
+        #
+        #
+        #     # ------------------ ORIENT CUBE -------------------------------------------------------------
+        #     rubik_cube.orient(present_move_table)
+        #     count += 1
 
-            result_episode[mode].append(int(steps < max_steps))  # at the end of each episode
-
-        for mode in ['table', 'random', 'balanced']:
-            result_era[mode].append(round(100*mean(result_episode[mode]), 2))   # at the end of each era
-        print(result_episode['table'])
-        print("era = {}, n_scramble = {}, Table = {}, Random = {}, Balanced = {}".format(era,
-                                                                                         n_scramble,
-                                                                                         result_era['table'][-1],
-                                                                                         result_era['random'][-1],
-                                                                                         result_era['balanced'][-1]))
-
-        # print("Episode = {},  Accuracy = {}% , n_scramble = {}, steps = {}".format(episode, int(accuracy), n_scramble, steps))
-        q_table.to_pickle("q_table.pkl")
+        q_table.to_pickle(q_table_filename)
+        print("era = {}, steps taken = {}".format(era, 0))
 
 
 
