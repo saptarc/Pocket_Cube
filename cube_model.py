@@ -217,17 +217,7 @@ class Rcube:
 
     def get_reward(self):
         faces_solved_for_reward = self.faces_solved()
-        if faces_solved_for_reward == 1:
-            return 10
-        elif faces_solved_for_reward == 2:
-            return 20
-        elif faces_solved_for_reward == 3:
-            return 50
-        elif faces_solved_for_reward == 4:
-            return 200
-        elif faces_solved_for_reward == 5:
-            return 1000
-        elif faces_solved_for_reward == 6:
+        if faces_solved_for_reward == 6:
             return 1000
         else:
             return 0
@@ -239,7 +229,7 @@ class Rcube:
     def change_perspective_random(self, step=1):
         perspective_moves = [['rpu','lpu'], ['rpd', 'lpd'], ['uyr', 'dyr'], ['uyl', 'dyl'], ['frr', 'brr'], ['frl', 'brl']]
 
-        for _ in range(random.randint(1,10)):
+        for _ in range(step):
             perspective_move = random.choice(perspective_moves)
             for move in perspective_move:
                 self.orient(cube_move=move)
